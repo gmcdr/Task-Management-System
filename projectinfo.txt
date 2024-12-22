@@ -1,0 +1,203 @@
+A seguir, apresento uma **descrição de um sistema** para que você possa **desenvolver e praticar** o uso de Arquitetura Hexagonal (Ports and Adapters). A ideia é construir um **Sistema de Gerenciamento de Tarefas** (Task Manager), com funcionalidades básicas de criação, edição, listagem e conclusão de tarefas, além de gerenciamento de usuários.
+
+---
+
+# 1. Descrição Geral
+
+O **Sistema de Gerenciamento de Tarefas** tem como objetivo organizar e acompanhar as tarefas de usuários em um ambiente colaborativo. Cada usuário pode criar, editar e concluir tarefas, além de marcar prazos e prioridades. Para manter o histórico e facilitar a comunicação, o sistema também pode enviar notificações quando ocorrerem mudanças ou quando um prazo estiver próximo.
+
+---
+
+# 2. Escopo e Principais Funcionalidades
+
+1. **Gerenciar Usuários**  
+   - Criar novo usuário.  
+   - Atualizar dados de um usuário (nome, e-mail, senha etc.).  
+   - Listar usuários.  
+   - Desativar um usuário.
+
+2. **Gerenciar Tarefas**  
+   - Criar nova tarefa, definindo título, descrição, responsável, data de criação e data de vencimento.  
+   - Atualizar dados de uma tarefa (ex.: mudar status, prioridade, descrição).  
+   - Concluir tarefa.  
+   - Listar tarefas por usuário, status e/ou prioridade.  
+   - Excluir tarefa.
+
+3. **Notificações**  
+   - Enviar notificação via e-mail ou outro canal (ex.: mensagem em aplicativo, SMS) quando:  
+     - Uma tarefa for atribuída a um usuário.  
+     - Uma tarefa tiver sua data de vencimento próxima.  
+     - Uma tarefa for concluída.
+
+---
+
+# 3. Domínio e Modelo de Dados
+
+### 3.1. Entidades Principais
+
+- **Usuário**  
+  - Identificador (ID)  
+  - Nome  
+  - E-mail  
+  - Senha  
+  - Status (ativo/inativo)
+
+- **Tarefa**  
+  - Identificador (ID)  
+  - Título  
+  - Descrição  
+  - Responsável (referência a um Usuário)  
+  - Data de criação  
+  - Data de vencimento (opcional)  
+  - Status (criada, em progresso, concluída)  
+  - Prioridade (baixa, média, alta)
+
+### 3.2. Regras de Negócio (exemplos)
+
+- Não é possível criar tarefa sem um usuário responsável.  
+- A data de criação é sempre a data/hora atual no momento de criação.  
+- Status de tarefa segue um fluxo: **criada** → **em progresso** → **concluída** (não pode voltar para um status anterior após marcado como concluída).  
+- Enviar notificação sempre que:  
+  - Nova tarefa for atribuída.  
+  - Faltar menos de 24 horas para a data de vencimento (se houver data de vencimento).  
+  - Uma tarefa for marcada como concluída.
+
+---
+
+# 4. Arquitetura Hexagonal (Ports and Adapters)
+
+A arquitetura hexagonal propõe isolar o **núcleo de negócio** (domínio) dos detalhes de infraestrutura e de interface, por meio de **portas** (ports) e **adaptadores** (adapters).
+
+## 4.1. Núcleo (Domínio)
+
+- **Casos de Uso / Serviços de Aplicação**  
+  - Ex.: `TarefaService`, `UsuarioService`  
+  - Métodos que expressam operações de negócio, como `criarTarefa()`, `concluirTarefa()`, `atualizarUsuario()`, etc.  
+
+- **Entidades / Agregados**  
+  - `Tarefa`, `Usuario` (comportamentos e invariantes de cada entidade)  
+  - Regras de negócio e validações (ex.: não permitir tarefa sem usuário, status não pode retroceder etc.).
+
+## 4.2. Portas (Ports)
+
+1. **Portas de Entrada (Driven Ports ou Primary Ports)**  
+   - Interfaces que expõem as funcionalidades do domínio. Por exemplo:  
+     ```java
+     public interface TarefaUseCase {
+         Tarefa criarTarefa(TarefaRequest request);
+         Tarefa atualizarTarefa(TarefaRequest request);
+         void concluirTarefa(Long tarefaId);
+         List<Tarefa> listarTarefasPorUsuario(Long usuarioId);
+         // etc.
+     }
+     ```
+   - Mesma ideia para usuários:
+     ```java
+     public interface UsuarioUseCase {
+         Usuario criarUsuario(UsuarioRequest request);
+         Usuario atualizarUsuario(UsuarioRequest request);
+         // etc.
+     }
+     ```
+
+2. **Portas de Saída (Driving Ports ou Secondary Ports)**  
+   - Interfaces que definem **como** o domínio acessa recursos externos, como banco de dados, serviços de envio de e-mail, sistemas externos. Exemplos:
+     ```java
+     public interface TarefaRepositoryPort {
+         Tarefa salvar(Tarefa tarefa);
+         Optional<Tarefa> buscarPorId(Long id);
+         List<Tarefa> buscarPorUsuario(Long usuarioId);
+         // ...
+     }
+
+     public interface NotificacaoPort {
+         void enviarNotificacao(String destinatario, String mensagem);
+     }
+     ```
+
+## 4.3. Adaptadores (Adapters)
+
+1. **Adaptadores de Entrada**  
+   - Implementam as portas de entrada ou **invocam** as portas de entrada. Por exemplo:  
+     - **Controller REST** (`TaskController`), que recebe requisições HTTP, extrai dados do request e chama os métodos de `TarefaUseCase`.  
+     - **CLI** ou **UI** (opcional), se quiser ter outra forma de interação.
+
+2. **Adaptadores de Saída**  
+   - Implementam as portas de saída definidas pelo domínio:  
+     - **Repositório** (Banco de Dados): Uma classe que implementa `TarefaRepositoryPort` e faz a persistência em um banco relacional (JPA, JDBC) ou NoSQL.  
+     - **Serviço de Notificação**: Uma classe que implementa `NotificacaoPort`, usando, por exemplo, JavaMail ou outra biblioteca para envio de e-mail.
+
+---
+
+# 5. Fluxos de Execução (Exemplo)
+
+1. **Criar Tarefa**  
+   - O adaptador de entrada (ex.: um controller REST) recebe um `POST /tarefas` com dados da tarefa.  
+   - Chama o método `criarTarefa(TarefaRequest request)` do `TarefaUseCase`.  
+   - O `TarefaUseCase` valida as regras de negócio e chama o `TarefaRepositoryPort.salvar(tarefa)`.  
+   - Após salvar, chama `NotificacaoPort.enviarNotificacao()` para alertar o responsável pela nova tarefa.  
+   - Retorna a tarefa criada ao adaptador de entrada, que responde ao cliente.
+
+2. **Concluir Tarefa**  
+   - O usuário faz requisição `PATCH /tarefas/{id}/concluir`.  
+   - O controller invoca `concluirTarefa(Long tarefaId)` no `TarefaUseCase`.  
+   - O `TarefaUseCase` marca a tarefa como “concluída” e persiste a mudança usando `TarefaRepositoryPort`.  
+   - Em seguida, envia uma notificação de conclusão usando `NotificacaoPort`.  
+   - O adaptador de entrada retorna um status de sucesso ao usuário.
+
+3. **Listar Tarefas por Usuário**  
+   - O adaptador de entrada (controller) recebe `GET /usuarios/{id}/tarefas`.  
+   - Invoca `listarTarefasPorUsuario(Long usuarioId)` no `TarefaUseCase`.  
+   - O serviço de aplicação chama `TarefaRepositoryPort.buscarPorUsuario(usuarioId)`.  
+   - Retorna a lista de tarefas para o adaptador, que formata a resposta (JSON, por exemplo) e envia ao cliente.
+
+---
+
+# 6. Requisitos Não Funcionais (Sugestões)
+
+1. **Persistência**: Use um banco de dados relacional (MySQL, PostgreSQL) ou NoSQL (MongoDB).  
+2. **Segurança**: Autenticação via token JWT e criptografia de senhas (ex.: BCrypt).  
+3. **Performance**: Otimize consultas (indexes, caches).  
+4. **Testes**:  
+   - Testes unitários do domínio (sem dependências externas).  
+   - Testes de integração para os adaptadores de saída (banco e notificação).  
+   - Testes de contrato para APIs REST.
+
+---
+
+# 7. Passo a Passo para Início do Desenvolvimento
+
+1. **Modelar o Domínio**  
+   - Criar classes `Tarefa`, `Usuario`, `StatusTarefa`, `PrioridadeTarefa` etc.  
+   - Definir as invariantes e regras de negócio dentro das entidades (ex.: métodos para alterar status).
+
+2. **Criar Interfaces (Ports)**  
+   - `TarefaUseCase` e `UsuarioUseCase` para portas de entrada.  
+   - `TarefaRepositoryPort` e `NotificacaoPort` para portas de saída, entre outras que julgar necessárias.
+
+3. **Implementar Casos de Uso (Serviços de Aplicação)**  
+   - Implementar as interfaces de entrada (`TarefaUseCaseImpl`, `UsuarioUseCaseImpl`), contendo a lógica de orquestração, validação e chamadas ao repositório/notificação.
+
+4. **Implementar Adaptadores**  
+   - **Adaptadores de Entrada**: Controllers REST (ex.: Spring Boot, Quarkus).  
+   - **Adaptadores de Saída**: Repositórios (JPA, JDBC, etc.), serviços de notificação (JavaMail, Twilio, Slack, etc.).
+
+5. **Configurar Inversão de Dependência (IoC/DI)**  
+   - Use frameworks como Spring, ou crie manualmente sua injeção de dependências para conectar os adaptadores às portas.
+
+6. **Testar**  
+   - Escreva testes unitários para as classes de domínio (sem banco de dados).  
+   - Use mocks para as portas de saída (`TarefaRepositoryPort` e `NotificacaoPort`) nos testes de caso de uso.  
+   - Crie testes de integração para verificar o funcionamento do repositório e do serviço de notificação real.
+
+---
+
+## Conclusão
+
+Esse **Sistema de Gerenciamento de Tarefas** é um projeto de porte médio que permite exercitar princípios da Arquitetura Hexagonal. Você terá **entidades claras**, **portas (interfaces)** que separam a lógica de negócio dos detalhes de infraestrutura, e **adaptadores** que podem ser facilmente substituídos ou simulados em testes.
+
+1. **Foque primeiro nas regras de negócio e no modelo de domínio**.  
+2. **Defina interfaces (ports) para o que o domínio precisa e expõe**.  
+3. **Implemente os adaptadores necessários** (REST, banco de dados, notificações) conectando-se às portas.  
+
+Ao final, você terá um sistema modular, testável e pronto para evolução — a essência da Arquitetura Hexagonal. Boa prática e bom desenvolvimento!
